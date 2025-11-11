@@ -14,6 +14,8 @@ import { fromLonLat } from 'ol/proj';
 import Style from 'ol/style/Style';
 import Icon from 'ol/style/Icon';
 import Stroke from 'ol/style/Stroke';
+import Fill from 'ol/style/Fill';
+import Text from 'ol/style/Text';
 import { boundingExtent } from 'ol/extent';
 import type { Coordinate } from 'ol/coordinate';
 import { useAuthorizedApi } from 'src/hooks/useAuthorizedApi';
@@ -64,7 +66,11 @@ type EstadoNotaInfo = {
   pinColor: string;
 };
 
-const DEFAULT_CENTER: [number, number] = [-68.1193, -16.4897];
+const ALMACEN_COORD: [number, number] = [-68.151984, -16.522179];
+const ALMACEN_LABEL = 'Almacen LatrinaCover';
+const ALMACEN_ICON_URL = '/icons/almacen-pin.svg';
+
+const DEFAULT_CENTER: [number, number] = ALMACEN_COORD;
 
 type RoutePoint = {
   lat: number;
@@ -610,6 +616,7 @@ const RecorridoMapa = () => {
     })();
 
     const center = fromLonLat(initialLonLat);
+    const almacenCoord = fromLonLat(ALMACEN_COORD);
     const truckIconUrl = `data:image/svg+xml;charset=UTF-8,${buildTruckSvg()}`;
 
     let currentZoom = 13;
@@ -619,27 +626,67 @@ const RecorridoMapa = () => {
       const zoomFactor = Math.max(0.6, Math.min(2.2, 0.5 + (currentZoom - 10) * 0.25));
 
       if (tipo === 'vehiculo') {
-        return new Style({ image: new Icon({ src: truckIconUrl, anchor: [0.5, 1], scale: 0.6 * zoomFactor }) });
+        const vehiculoStyle = new Style({
+          image: new Icon({ src: truckIconUrl, anchor: [0.5, 1], scale: 0.6 * zoomFactor }),
+        });
+        vehiculoStyle.setZIndex(400);
+        return vehiculoStyle;
+      }
+
+      if (tipo === 'almacen') {
+        const markerStyle = new Style({
+          image: new Icon({
+            src: ALMACEN_ICON_URL,
+            anchor: [0.5, 1],
+            scale: 0.32 * zoomFactor,
+            crossOrigin: 'anonymous',
+          }),
+          text: new Text({
+            text: ALMACEN_LABEL,
+            font: '600 13px "Inter", "Segoe UI", sans-serif',
+            fill: new Fill({ color: '#1f2937' }),
+            stroke: new Stroke({ color: 'rgba(248, 250, 252, 0.9)', width: 3 }),
+            backgroundFill: new Fill({ color: 'rgba(255,255,255,0.95)' }),
+            offsetY: -38,
+            padding: [4, 8, 4, 8],
+            textAlign: 'center',
+          }),
+        });
+        markerStyle.setZIndex(480);
+        return markerStyle;
       }
 
       if (tipo === 'recorrido') {
-        return new Style({
+        const routeStyle = new Style({
           stroke: new Stroke({ color: '#2563eb', width: 3, lineCap: 'round', lineJoin: 'round' }),
         });
+        routeStyle.setZIndex(150);
+        return routeStyle;
       }
 
       const estado = (feature as any).get('estado') as number | null;
       const estadoInfo = getNotaEstadoInfo(estado);
       const isSelected = feature.getId() === selectedIdRef.current;
       const baseScale = 0.9 * zoomFactor * (isSelected ? 1.35 : 1);
-      return new Style({ image: new Icon({ src: `data:image/svg+xml;charset=UTF-8,${buildPinSvg(estadoInfo.pinColor)}`, anchor: [0.5, 1], scale: baseScale }) });
+      const entregaStyle = new Style({
+        image: new Icon({
+          src: `data:image/svg+xml;charset=UTF-8,${buildPinSvg(estadoInfo.pinColor)}`,
+          anchor: [0.5, 1],
+          scale: baseScale,
+        }),
+      });
+      entregaStyle.setZIndex(isSelected ? 360 : 320);
+      return entregaStyle;
     };
 
     const vehiculo = new Feature({ geometry: new Point(center), tipo: 'vehiculo' });
     vehiculo.setId('vehiculo');
     vehiculoFeatureRef.current = vehiculo;
 
-    const vectorSource = new VectorSource({ features: [vehiculo] });
+    const almacen = new Feature({ geometry: new Point(almacenCoord), tipo: 'almacen' });
+    almacen.setId('almacen-origen');
+
+    const vectorSource = new VectorSource({ features: [vehiculo, almacen] });
     vectorSourceRef.current = vectorSource;
 
     const vectorLayer = new VectorLayer({ source: vectorSource, style: styleFn });
@@ -753,7 +800,7 @@ const RecorridoMapa = () => {
       source.addFeature(feature);
     });
 
-    const coords: Coordinate[] = [];
+    const coords: Coordinate[] = [fromLonLat(ALMACEN_COORD)];
 
     if (entregasConCoordenadas.length > 0) {
       coords.push(

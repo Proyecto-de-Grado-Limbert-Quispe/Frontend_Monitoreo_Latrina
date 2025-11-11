@@ -158,6 +158,22 @@ const resolveProgramacionDispositivoId = (
   return null;
 };
 
+const getTodayIsoDate = (): string => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const offsetMs = today.getTimezoneOffset() * 60 * 1000;
+  const adjusted = new Date(today.getTime() - offsetMs);
+  return adjusted.toISOString().split('T')[0]!;
+};
+
+const isEstadoEntregado = (estado: number | string | null | undefined): boolean => {
+  if (estado === null || estado === undefined) {
+    return false;
+  }
+  const numeric = typeof estado === 'number' ? estado : Number(estado);
+  return numeric === 2;
+};
+
 const mapProgramacionEstado = (estado: number | null) => {
   switch (estado) {
     case 0:
@@ -205,6 +221,13 @@ const PanelMonitoreo: React.FC = () => {
   const [items, setItems] = useState<ProgramacionItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingProgramacion, setEditingProgramacion] = useState<ProgramacionItem | null>(null);
+  const [editFecha, setEditFecha] = useState('');
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deleteInProgress, setDeleteInProgress] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const todayIsoDate = useMemo(() => getTodayIsoDate(), []);
 
   useEffect(() => {
     if (!token) {
@@ -268,6 +291,109 @@ const PanelMonitoreo: React.FC = () => {
       controller.abort();
     };
   }, [authorizedFetch, searchParams, token]);
+
+  const closeEditForm = () => {
+    setEditingProgramacion(null);
+    setEditFecha('');
+    setMutationError(null);
+  };
+
+  const openEditForm = (programacion: ProgramacionItem) => {
+    if (isEstadoEntregado(programacion.estadoEntrega)) {
+      return;
+    }
+    if (editingProgramacion?.id === programacion.id) {
+      closeEditForm();
+      return;
+    }
+    setActionStatus(null);
+    setMutationError(null);
+    const normalizedProgramacionDate = normalizeIsoDateString(programacion.fechaEntrega);
+    const initialDate =
+      normalizedProgramacionDate && normalizedProgramacionDate >= todayIsoDate ? normalizedProgramacionDate : todayIsoDate;
+    setEditingProgramacion(programacion);
+    setEditFecha(initialDate ?? todayIsoDate);
+  };
+
+  const handleDelete = async (programacion: ProgramacionItem) => {
+    const confirmed =
+      typeof window === 'undefined'
+        ? true
+        : window.confirm(`¿Deseas eliminar la programación ${programacion.id}? Esta acción no se puede deshacer.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setActionStatus(null);
+    setDeleteInProgress(programacion.id);
+    try {
+      const response = await authorizedFetch('/api/v1/programacion-distribucion/delete/' + programacion.id, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `No se pudo eliminar (status ${response.status}).`);
+      }
+      setItems((prev) => prev.filter((item) => item.id !== programacion.id));
+      if (editingProgramacion?.id === programacion.id) {
+        closeEditForm();
+      }
+      setActionStatus({ type: 'success', message: 'Programación eliminada correctamente.' });
+    } catch (deleteError) {
+      console.error('Error al eliminar programacion', deleteError);
+      setActionStatus({
+        type: 'error',
+        message: 'No se pudo eliminar la programación seleccionada. Intenta nuevamente.',
+      });
+    } finally {
+      setDeleteInProgress(null);
+    }
+  };
+
+  const handleEditSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingProgramacion) {
+      return;
+    }
+
+    const normalizedDate = normalizeIsoDateString(editFecha);
+    if (!normalizedDate) {
+      setMutationError('Selecciona una fecha válida con el formato yyyy-MM-dd.');
+      return;
+    }
+    if (normalizedDate < todayIsoDate) {
+      setMutationError('Selecciona una fecha igual o posterior a la fecha actual.');
+      return;
+    }
+
+    setActionStatus(null);
+    setMutationError(null);
+    setEditSubmitting(true);
+
+    try {
+      const response = await authorizedFetch(
+        '/api/v1/programacion-distribucion/updateFecha/' + editingProgramacion.id + '/' + normalizedDate,
+        {
+          method: 'PUT',
+        },
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `No se pudo actualizar la fecha (status ${response.status}).`);
+      }
+      setItems((prev) =>
+        prev.map((item) => (item.id === editingProgramacion.id ? { ...item, fechaEntrega: normalizedDate } : item)),
+      );
+      setActionStatus({ type: 'success', message: 'Fecha actualizada correctamente.' });
+      closeEditForm();
+    } catch (editError) {
+      console.error('Error al actualizar fecha de programacion', editError);
+      setMutationError(editError instanceof Error ? editError.message : 'No se pudo actualizar la fecha.');
+      setActionStatus({ type: 'error', message: 'No se pudo actualizar la fecha. Intenta nuevamente.' });
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
 
   const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -350,44 +476,101 @@ const PanelMonitoreo: React.FC = () => {
               ) : (
                 programaciones.map((programacion) => {
                   const estado = mapProgramacionEstado(programacion.estadoEntrega);
+                  const canEdit = !isEstadoEntregado(programacion.estadoEntrega);
+                  const isEditing = editingProgramacion?.id === programacion.id;
                   return (
-                    <TableRow key={programacion.id}>
-                      <TableCell className="whitespace-nowrap ps-6">
-                        <span className="text-sm">{formatDateDisplay(programacion.fechaEntrega)}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{programacion.id}</span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge color={estado.badge} className={'border ' + estado.cls}>
-                          {estado.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <button
-                            title="Ver"
-                            className="hover:text-primary"
-                            onClick={() =>
-                              navigate('/menu/panel-monitoreo/salidas/' + programacion.id, {
-                                state: { programacion },
-                              })
-                            }
-                          >
-                            <Icon icon="solar:eye-linear" width={20} />
-                          </button>
-                          <button title="Eliminar" className="hover:text-error" disabled>
-                            <Icon icon="solar:trash-bin-minimalistic-linear" width={20} />
-                          </button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                    <React.Fragment key={programacion.id}>
+                      <TableRow>
+                        <TableCell className="whitespace-nowrap ps-6">
+                          <span className="text-sm">{formatDateDisplay(programacion.fechaEntrega)}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{programacion.id}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge color={estado.badge} className={'border ' + estado.cls}>
+                            {estado.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <button
+                              title="Ver"
+                              className="hover:text-primary"
+                              onClick={() =>
+                                navigate('/menu/panel-monitoreo/salidas/' + programacion.id, {
+                                  state: { programacion },
+                                })
+                              }
+                            >
+                              <Icon icon="solar:eye-linear" width={20} />
+                            </button>
+                            <button
+                              title={
+                                canEdit ? 'Modificar fecha' : 'No se puede modificar una programación ya entregada'
+                              }
+                              className="hover:text-warning disabled:text-dark/40 disabled:cursor-not-allowed"
+                              onClick={() => openEditForm(programacion)}
+                              disabled={!canEdit || (editSubmitting && isEditing)}
+                            >
+                              <Icon icon="solar:pen-new-square-linear" width={20} />
+                            </button>
+                            <button
+                              title="Eliminar"
+                              className="hover:text-error disabled:text-dark/40 disabled:cursor-not-allowed"
+                              onClick={() => handleDelete(programacion)}
+                              disabled={deleteInProgress === programacion.id}
+                            >
+                              <Icon icon="solar:trash-bin-minimalistic-linear" width={20} />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {isEditing && (
+                        <TableRow>
+                          <TableCell colSpan={4}>
+                            <form className="flex flex-col gap-3 md:flex-row md:items-end" onSubmit={handleEditSubmit}>
+                              <div className="flex-1">
+                                <label className="mb-2 block text-sm text-dark/80">Nueva fecha de distribución</label>
+                                <TextInput
+                                  type="date"
+                                  value={editFecha}
+                                  onChange={(event) => setEditFecha(event.target.value)}
+                                  className="form-control form-rounded-xl"
+                                  required
+                                  min={todayIsoDate}
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <Button type="submit" color="primary" disabled={editSubmitting}>
+                                  {editSubmitting ? 'Guardando...' : 'Guardar'}
+                                </Button>
+                                <Button type="button" color="light" onClick={closeEditForm} disabled={editSubmitting}>
+                                  Cancelar
+                                </Button>
+                              </div>
+                            </form>
+                            {mutationError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{mutationError}</p>}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </React.Fragment>
                   );
                 })
               )}
             </TableBody>
           </Table>
         </div>
+        {actionStatus && (
+          <p
+            className={
+              'mt-4 text-sm ' +
+              (actionStatus.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')
+            }
+          >
+            {actionStatus.message}
+          </p>
+        )}
       </div>
     </>
   );
