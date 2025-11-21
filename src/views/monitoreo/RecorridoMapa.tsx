@@ -342,6 +342,7 @@ const RecorridoMapa = () => {
     [entregas]
   );
   const fechaRange = useMemo(() => parseFechaEntregaRange(programacion?.fechaEntrega ?? null), [programacion?.fechaEntrega]);
+  const fechaRangeKey = fechaRange ? `${fechaRange.from}_${fechaRange.to}_${fechaRange.shouldPoll ? '1' : '0'}` : 'null';
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [vehiclePosition, setVehiclePosition] = useState<{ lat: number; lon: number } | null>(null);
@@ -456,11 +457,16 @@ const RecorridoMapa = () => {
   const vehiculoFeatureRef = useRef<Feature<Point> | null>(null);
   const previousVehiclePositionRef = useRef<{ lat: number; lon: number } | null>(null);
   const lastPositionTimestampRef = useRef<number>(0);
+  const hasAutoFitRef = useRef(false);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
     vectorLayerRef.current?.changed();
   }, [selectedId]);
+
+  useEffect(() => {
+    hasAutoFitRef.current = false;
+  }, [programacion?.id, fechaRangeKey, traccarDeviceId]);
 
   useEffect(() => {
     setVehicleRoute([]);
@@ -588,7 +594,7 @@ const RecorridoMapa = () => {
       }
       pollingInterval = window.setInterval(() => {
         void pollLatestPosition();
-      }, 3000);
+      }, 2000);
     };
 
     void initialize();
@@ -816,11 +822,12 @@ const RecorridoMapa = () => {
       coords.push(fromLonLat([vehiclePosition.lon, vehiclePosition.lat]));
     }
 
-    if (coords.length > 0) {
+    if (coords.length > 0 && !hasAutoFitRef.current) {
       const extent = boundingExtent(coords);
       const view = viewRef.current;
       if (view) {
         view.fit(extent, { padding: [80, 80, 80, 80], duration: 600, maxZoom: 16 });
+        hasAutoFitRef.current = true;
       }
     }
 

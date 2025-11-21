@@ -6,7 +6,7 @@ const resolveApiBaseUrl = (): string => {
   if (env) {
     return env.replace(/\/$/, '');
   }
-  //return 'https://tvs-letter-libraries-cape.trycloudflare.com';
+  //return 'https://includes-conferences-went-showing.trycloudflare.com';
   return 'http://localhost:8080';
 };
 
