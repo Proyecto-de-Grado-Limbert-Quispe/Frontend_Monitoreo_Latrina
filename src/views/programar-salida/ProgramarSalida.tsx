@@ -59,6 +59,23 @@ type Pedido = {
 type VehiculoOption = { id: string; descripcion: string };
 type ConductorOption = { id: string; nombre: string };
 
+type NotasSalidaPage = {
+  content?: NotaSalidaApi[];
+  totalElements?: number;
+  totalPages?: number;
+  number?: number;
+  size?: number;
+  first?: boolean;
+  last?: boolean;
+  numberOfElements?: number;
+};
+
+type ApiResponse<T> = {
+  code?: number;
+  data?: T;
+  message?: string;
+};
+
 const formatAsInputDate = (date: Date): string => date.toISOString().split('T')[0];
 const formatAsLocalDateTime = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
@@ -114,6 +131,8 @@ const extractProgramacionId = (payload: unknown): number | null => {
   return null;
 };
 
+const PEDIDOS_PAGE_SIZES = [5, 8, 10, 15] as const;
+
 const ProgramarSalida: React.FC = () => {
   const { auth } = useAuth();
   const { token, authorizedFetch } = useAuthorizedApi();
@@ -123,6 +142,13 @@ const ProgramarSalida: React.FC = () => {
   const [vehiculos, setVehiculos] = useState<VehiculoOption[]>([]);
   const [conductores, setConductores] = useState<ConductorOption[]>([]);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [pedidosPage, setPedidosPage] = useState(0);
+  const [pedidosSize, setPedidosSize] = useState<number>(PEDIDOS_PAGE_SIZES[1]);
+  const [pedidosTotalPages, setPedidosTotalPages] = useState(0);
+  const [pedidosTotalElements, setPedidosTotalElements] = useState(0);
+  const [isLoadingPedidos, setIsLoadingPedidos] = useState(false);
+  const [pedidosError, setPedidosError] = useState<string | null>(null);
+  const [esUltimaPaginaPedidos, setEsUltimaPaginaPedidos] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
@@ -132,51 +158,115 @@ const ProgramarSalida: React.FC = () => {
 
   useEffect(() => {
     if (!token) {
+      setPedidos([]);
+      setPedidosTotalElements(0);
+      setPedidosTotalPages(0);
+      setEsUltimaPaginaPedidos(true);
       return;
     }
 
     let isMounted = true;
+    const controller = new AbortController();
 
     const obtenerNotasSalida = async () => {
+      setIsLoadingPedidos(true);
+      setPedidosError(null);
+
+      const safePage = Math.max(0, pedidosPage);
       try {
-        const response = await authorizedFetch('/api/v1/notas-salidas/obtener');
+        const query = new URLSearchParams({
+          page: String(safePage),
+          size: String(pedidosSize),
+        });
+        const response = await authorizedFetch(`/api/v1/notas-salidas/obtener?${query.toString()}`, {
+          signal: controller.signal,
+        });
+        const json = (await response.json().catch(() => null)) as ApiResponse<NotasSalidaPage | NotaSalidaApi[]> | null;
 
         if (!response.ok) {
-          throw new Error(`Respuesta inesperada (${response.status})`);
+          const message = json?.message ?? `Respuesta inesperada (${response.status})`;
+          throw new Error(message);
         }
 
-        const json = (await response.json()) as { data?: NotaSalidaApi[] };
+        if (json?.code && json.code !== 200) {
+          throw new Error(json.message || 'Error al obtener notas de salida.');
+        }
+
+        const data = json?.data;
+        let listaNotas: NotaSalidaApi[] = [];
+        let totalPaginas = 0;
+        let totalRegistros = 0;
+        let ultimaPagina = true;
+
+        if (Array.isArray(data)) {
+          listaNotas = data;
+          totalRegistros = data.length;
+          totalPaginas = data.length ? 1 : 0;
+          ultimaPagina = true;
+        } else if (data && typeof data === 'object') {
+          const pageData = data as NotasSalidaPage;
+          if (Array.isArray(pageData.content)) {
+            listaNotas = pageData.content;
+          }
+          totalPaginas = typeof pageData.totalPages === 'number' ? pageData.totalPages : listaNotas.length ? 1 : 0;
+          totalRegistros = typeof pageData.totalElements === 'number' ? pageData.totalElements : listaNotas.length;
+          ultimaPagina =
+            typeof pageData.last === 'boolean'
+              ? pageData.last
+              : totalPaginas
+                ? safePage >= totalPaginas - 1
+                : true;
+        }
+
         if (!isMounted) {
           return;
         }
 
-        const notas = Array.isArray(json.data) ? json.data : [];
-        setPedidos(
-          notas.map((nota) => {
-            const ubicacionesLimpias = (nota.ubicaciones ?? [])
-              .filter(isUbicacionValida)
-              .map((ubicacion) => ({
-                id: String(ubicacion.idUbicacionCliente),
-                nombre: sanitize(ubicacion.nombreDireccion) || 'Sin direccion',
-                raw: ubicacion,
-              }));
+        if (totalPaginas > 0 && safePage >= totalPaginas) {
+          setPedidosPage(Math.max(totalPaginas - 1, 0));
+          return;
+        }
 
-            return {
-              id: String(nota.idNotaSalida),
-              nroSalida: String(nota.nroSalida ?? ''),
-              nroPedido: String(nota.codigoPedido ?? ''),
-              cliente: sanitize(nota.cliente?.nombre) || 'Sin cliente',
-              clienteInfo: nota.cliente ?? null,
-              ubicaciones: ubicacionesLimpias,
-              seleccionado: false,
-              rawNota: nota,
-            };
-          }),
-        );
+        const pedidosMapeados = listaNotas.map((nota) => {
+          const ubicacionesLimpias = (nota.ubicaciones ?? [])
+            .filter(isUbicacionValida)
+            .map((ubicacion) => ({
+              id: String(ubicacion.idUbicacionCliente),
+              nombre: sanitize(ubicacion.nombreDireccion) || 'Sin direccion',
+              raw: ubicacion,
+            }));
+
+          return {
+            id: String(nota.idNotaSalida),
+            nroSalida: String(nota.nroSalida ?? ''),
+            nroPedido: String(nota.codigoPedido ?? ''),
+            cliente: sanitize(nota.cliente?.nombre) || 'Sin cliente',
+            clienteInfo: nota.cliente ?? null,
+            ubicaciones: ubicacionesLimpias,
+            seleccionado: false,
+            rawNota: nota,
+          };
+        });
+
+        setPedidos(pedidosMapeados);
+        setPedidosTotalElements(totalRegistros);
+        setPedidosTotalPages(totalPaginas);
+        setEsUltimaPaginaPedidos(ultimaPagina);
       } catch (error) {
+        if ((error as Error).name === 'AbortError') {
+          return;
+        }
         console.error('Error al obtener notas de salida', error);
         if (isMounted) {
           setPedidos([]);
+          setPedidosError(error instanceof Error ? error.message : 'No se pudieron cargar los pedidos.');
+          setPedidosTotalElements(0);
+          setPedidosTotalPages(0);
+          setEsUltimaPaginaPedidos(true);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingPedidos(false);
         }
       }
     };
@@ -185,8 +275,9 @@ const ProgramarSalida: React.FC = () => {
 
     return () => {
       isMounted = false;
+      controller.abort();
     };
-  }, [authorizedFetch, token]);
+  }, [authorizedFetch, pedidosPage, pedidosSize, token]);
 
   useEffect(() => {
     if (!token) {
@@ -270,6 +361,46 @@ const ProgramarSalida: React.FC = () => {
 
   const toggleSeleccion = (id: string) => {
     setPedidos((prev) => prev.map((p) => (p.id === id ? { ...p, seleccionado: !p.seleccionado } : p)));
+  };
+
+  const registrosInicio = pedidos.length ? pedidosPage * pedidosSize + 1 : 0;
+  const registrosFin = pedidos.length ? registrosInicio + pedidos.length - 1 : 0;
+  const totalPaginasVisibles = Math.max(
+    pedidosTotalPages > 0 ? pedidosTotalPages : Math.ceil((pedidosTotalElements || 0) / pedidosSize) || 1,
+    1,
+  );
+  const currentPedidosPageLabel = Math.min(pedidosPage + 1, totalPaginasVisibles);
+  const isFirstPedidosPage = pedidosPage <= 0;
+  const isLastPedidosPage =
+    pedidosTotalPages > 0 ? pedidosPage >= pedidosTotalPages - 1 : esUltimaPaginaPedidos || pedidos.length < pedidosSize;
+  const resumenPedidos =
+    pedidosTotalElements > 0 && registrosInicio && registrosFin
+      ? `Mostrando ${registrosInicio}-${registrosFin} de ${pedidosTotalElements} pedidos`
+      : pedidosTotalElements > 0
+        ? `Total de pedidos: ${pedidosTotalElements}`
+        : '';
+
+  const handleNextPedidosPage = () => {
+    if (isLastPedidosPage || isLoadingPedidos) {
+      return;
+    }
+    setPedidosPage((prev) => prev + 1);
+  };
+
+  const handlePreviousPedidosPage = () => {
+    if (isFirstPedidosPage || isLoadingPedidos) {
+      return;
+    }
+    setPedidosPage((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handlePedidosPageSizeChange = (value: string) => {
+    const newSize = Number(value);
+    if (Number.isNaN(newSize) || newSize <= 0) {
+      return;
+    }
+    setPedidosSize(newSize);
+    setPedidosPage(0);
   };
 
   const guardarProgramacion = async (e: React.FormEvent) => {
@@ -446,7 +577,7 @@ const ProgramarSalida: React.FC = () => {
 
       <div className="rounded-xl dark:shadow-dark-md shadow-md bg-white dark:bg-darkgray p-6">
         <div className="grid grid-cols-12 gap-6">
-          <div className="xl:col-span-6 col-span-12">
+          <div className="xl:col-span-4 col-span-12">
             <h6 className="text-base font-medium mb-4">Ingrese los datos.</h6>
             <div className="flex flex-col gap-4">
               <div>
@@ -508,11 +639,7 @@ const ProgramarSalida: React.FC = () => {
             </div>
           </div>
 
-          <div className="xl:col-span-1 col-span-12 hidden xl:block">
-            <div className="w-px h-full bg-black/10 mx-auto" />
-          </div>
-
-          <div className="xl:col-span-5 col-span-12">
+          <div className="xl:col-span-8 col-span-12">
             <h6 className="text-base font-medium mb-4">Seleccione los pedidos a entregar.</h6>
             <div className="overflow-x-auto">
               <Table hoverable>
@@ -526,41 +653,104 @@ const ProgramarSalida: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody className="divide-y divide-gray-300">
-                  {pedidos.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell className="whitespace-nowrap ps-6">
-                        <span className="text-sm">{p.nroSalida}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{p.nroPedido}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{p.cliente}</span>
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={p.ubicacionSeleccionada || ''}
-                          onChange={(e) => actualizarUbicacion(p.id, e.target.value)}
-                          className="select-md"
-                          disabled={p.ubicaciones.length === 0}
-                        >
-                          <option value="" disabled>
-                            {p.ubicaciones.length ? 'Elige ubicacion' : 'Sin ubicaciones'}
-                          </option>
-                          {p.ubicaciones.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.nombre}
-                            </option>
-                          ))}
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Checkbox checked={!!p.seleccionado} onChange={() => toggleSeleccion(p.id)} />
+                  {isLoadingPedidos ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-6 text-center text-sm text-dark/70">
+                        Cargando pedidos...
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : pedidosError ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-6 text-center text-sm text-red-600 dark:text-red-400">
+                        {pedidosError}
+                      </TableCell>
+                    </TableRow>
+                  ) : pedidos.length ? (
+                    pedidos.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="whitespace-nowrap ps-6">
+                          <span className="text-sm">{p.nroSalida}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{p.nroPedido}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{p.cliente}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={p.ubicacionSeleccionada || ''}
+                            onChange={(e) => actualizarUbicacion(p.id, e.target.value)}
+                            className="select-md"
+                            disabled={p.ubicaciones.length === 0}
+                          >
+                            <option value="" disabled>
+                              {p.ubicaciones.length ? 'Elige ubicacion' : 'Sin ubicaciones'}
+                            </option>
+                            {p.ubicaciones.map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.nombre}
+                              </option>
+                            ))}
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Checkbox checked={!!p.seleccionado} onChange={() => toggleSeleccion(p.id)} />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-6 text-center text-sm text-dark/70">
+                        No hay pedidos disponibles para programar.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
+            </div>
+            <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-dark/70">
+                {pedidosTotalElements ? resumenPedidos || `Total de pedidos: ${pedidosTotalElements}` : 'No hay pedidos para mostrar.'}
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-dark/70">Por pagina</span>
+                <Select
+                  value={String(pedidosSize)}
+                  onChange={(e) => handlePedidosPageSizeChange(e.target.value)}
+                  className="w-28"
+                  disabled={isLoadingPedidos}
+                >
+                  {PEDIDOS_PAGE_SIZES.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <Button
+                  type="button"
+                  color="light"
+                  size="xs"
+                  onClick={handlePreviousPedidosPage}
+                  disabled={isFirstPedidosPage || isLoadingPedidos}
+                >
+                  Anterior
+                </Button>
+                <span className="text-dark/70">
+                  Pagina {currentPedidosPageLabel} de {totalPaginasVisibles}
+                </span>
+                <Button
+                  type="button"
+                  color="light"
+                  size="xs"
+                  onClick={handleNextPedidosPage}
+                  disabled={isLastPedidosPage || isLoadingPedidos}
+                >
+                  Siguiente
+                </Button>
+              </div>
             </div>
           </div>
         </div>

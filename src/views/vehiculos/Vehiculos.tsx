@@ -42,6 +42,23 @@ type EditVehiculoFormState = {
   fechaUltimoMantenimiento: string;
 };
 
+type VehiculosPage = {
+  content?: VehiculoApi[];
+  totalElements?: number;
+  totalPages?: number;
+  number?: number;
+  size?: number;
+  first?: boolean;
+  last?: boolean;
+  numberOfElements?: number;
+};
+
+type ApiResponse<T> = {
+  code?: number;
+  data?: T;
+  message?: string;
+};
+
 const sanitize = (value?: string | null): string => (value ?? '').trim();
 
 const mapVehiculo = (vehiculo: VehiculoApi): Vehiculo => ({
@@ -116,6 +133,8 @@ const formatDate = (value: string | null): string => {
   return new Intl.DateTimeFormat('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
 };
 
+const PAGE_SIZES = [5, 8, 10, 15] as const;
+
 const Vehiculos: React.FC = () => {
   const navigate = useNavigate();
   const { token, authorizedFetch } = useAuthorizedApi();
@@ -131,49 +150,159 @@ const Vehiculos: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [size, setSize] = useState<number>(PAGE_SIZES[1]);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [isFirstPage, setIsFirstPage] = useState(true);
+  const [isLastPage, setIsLastPage] = useState(true);
+
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm]);
 
   useEffect(() => {
     if (!token) {
       setVehiculos([]);
       setSelectedVehiculo(null);
+      setTotalElements(0);
+      setTotalPages(0);
+      setIsFirstPage(true);
+      setIsLastPage(true);
       return;
     }
 
     let isMounted = true;
     const controller = new AbortController();
-    const term = searchTerm.trim() === '' ? 'all' : searchTerm.trim();
+    const normalizedTerm = searchTerm.trim();
+    const isAll = normalizedTerm === '' || normalizedTerm.toLowerCase() === 'all';
+
+    const parsePayload = (
+      payload: VehiculosPage | VehiculoApi[] | null | undefined,
+      defaultFirst: boolean,
+      defaultLast: boolean,
+      currentPage: number,
+    ) => {
+      let itemsSource: VehiculoApi[] = [];
+      let totalRegistros = 0;
+      let totalPaginas = 0;
+      let firstFlag = defaultFirst;
+      let lastFlag = defaultLast;
+
+      if (Array.isArray(payload)) {
+        itemsSource = payload;
+        totalRegistros = payload.length;
+        totalPaginas = payload.length ? 1 : 0;
+        firstFlag = true;
+        lastFlag = true;
+      } else if (payload && typeof payload === 'object') {
+        const pageData = payload as VehiculosPage;
+        if (Array.isArray(pageData.content)) {
+          itemsSource = pageData.content;
+        }
+        totalRegistros =
+          typeof pageData.totalElements === 'number' ? pageData.totalElements : itemsSource.length;
+        if (typeof pageData.totalPages === 'number') {
+          totalPaginas = pageData.totalPages;
+        } else if (totalRegistros > 0 && size > 0) {
+          totalPaginas = Math.ceil(totalRegistros / size);
+        } else {
+          totalPaginas = itemsSource.length ? 1 : 0;
+        }
+        firstFlag = typeof pageData.first === 'boolean' ? pageData.first : firstFlag;
+        lastFlag =
+          typeof pageData.last === 'boolean'
+            ? pageData.last
+            : totalPaginas
+              ? currentPage >= totalPaginas - 1
+              : itemsSource.length < size;
+      }
+
+      return { itemsSource, totalRegistros, totalPaginas, firstFlag, lastFlag };
+    };
 
     const obtenerVehiculos = async () => {
       setIsLoading(true);
       setError(null);
+      const safePage = Math.max(page, 0);
       try {
-        const response = await authorizedFetch(`/api/v1/vehiculos/${encodeURIComponent(term)}`, {
-          signal: controller.signal,
-        });
+        let dataPayload: VehiculosPage | VehiculoApi[] | null | undefined = null;
 
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `Error al obtener vehiculos (${response.status}).`);
+        if (isAll) {
+          const params = new URLSearchParams({
+            page: String(safePage),
+            size: String(size),
+          });
+          const response = await authorizedFetch(`/api/v1/vehiculos/all?${params.toString()}`, {
+            signal: controller.signal,
+          });
+
+          const json = (await response.json().catch(() => null)) as ApiResponse<VehiculosPage | VehiculoApi[]> | null;
+
+          if (!response.ok) {
+            const message = json?.message ?? `Error al obtener vehiculos (${response.status}).`;
+            throw new Error(message);
+          }
+
+          if (json?.code && json.code !== 200) {
+            throw new Error(json.message || 'Error al obtener vehiculos.');
+          }
+
+          dataPayload = json?.data;
+        } else {
+          const response = await authorizedFetch(`/api/v1/vehiculos/${encodeURIComponent(normalizedTerm)}`, {
+            signal: controller.signal,
+          });
+
+          const json = (await response.json().catch(() => null)) as ApiResponse<VehiculosPage | VehiculoApi[]> | null;
+
+          if (!response.ok) {
+            const message = json?.message ?? `Error al buscar vehiculos (${response.status}).`;
+            throw new Error(message);
+          }
+
+          if (json?.code && json.code !== 200) {
+            throw new Error(json.message || 'Error al buscar vehiculos.');
+          }
+
+          dataPayload = json?.data;
         }
 
-        const json = (await response.json()) as { data?: VehiculoApi[] };
+        const { itemsSource, totalRegistros, totalPaginas, firstFlag, lastFlag } = parsePayload(
+          dataPayload,
+          safePage <= 0,
+          true,
+          safePage,
+        );
+
         if (!isMounted) {
           return;
         }
 
-        const items = Array.isArray(json.data) ? json.data.map(mapVehiculo) : [];
+        if (isAll && totalPaginas > 0 && safePage >= totalPaginas) {
+          setPage(Math.max(totalPaginas - 1, 0));
+          return;
+        }
+
+        const items = itemsSource.map(mapVehiculo);
         setVehiculos(items);
+        setTotalElements(totalRegistros);
+        setTotalPages(totalPaginas);
+        setIsFirstPage(firstFlag);
+        setIsLastPage(lastFlag);
         setSelectedVehiculo((prev) => (prev && items.some((vehiculo) => vehiculo.id === prev.id) ? prev : null));
       } catch (error) {
-        if (controller.signal.aborted) {
+        if (!isMounted || controller.signal.aborted) {
           return;
         }
         console.error('Error al obtener vehiculos', error);
-        if (isMounted) {
-          setError('No se pudieron cargar los vehiculos. Intenta nuevamente.');
-          setVehiculos([]);
-          setSelectedVehiculo(null);
-        }
+        setError(error instanceof Error ? error.message : 'No se pudieron cargar los vehiculos. Intenta nuevamente.');
+        setVehiculos([]);
+        setSelectedVehiculo(null);
+        setTotalElements(0);
+        setTotalPages(0);
+        setIsFirstPage(true);
+        setIsLastPage(true);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -187,7 +316,43 @@ const Vehiculos: React.FC = () => {
       isMounted = false;
       controller.abort();
     };
-  }, [authorizedFetch, searchTerm, token]);
+  }, [authorizedFetch, page, searchTerm, size, token]);
+
+  const startIndex = vehiculos.length ? page * size + 1 : 0;
+  const endIndex = vehiculos.length ? startIndex + vehiculos.length - 1 : 0;
+  const hasTotal = totalElements > 0;
+  const computedTotalPages =
+    totalPages > 0 ? totalPages : hasTotal && size > 0 ? Math.ceil(totalElements / size) || 1 : 1;
+  const currentPageLabel = Math.min(page + 1, computedTotalPages || 1);
+  const resumenVehiculos =
+    hasTotal && startIndex && endIndex
+      ? `Mostrando ${startIndex}-${endIndex} de ${totalElements} vehiculos`
+      : hasTotal
+        ? `Total de vehiculos: ${totalElements}`
+        : '';
+
+  const handleNextPage = () => {
+    if (isLastPage || isLoading) {
+      return;
+    }
+    setPage((prev) => prev + 1);
+  };
+
+  const handlePreviousPage = () => {
+    if (isFirstPage || isLoading) {
+      return;
+    }
+    setPage((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return;
+    }
+    setSize(parsed);
+    setPage(0);
+  };
 
   const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -199,6 +364,7 @@ const Vehiculos: React.FC = () => {
     setQuery('');
     setSearchTerm('all');
     setSelectedVehiculo(null);
+    setPage(0);
   };
 
   const handleAgregar = () => {
@@ -562,8 +728,8 @@ const handleDeleteVehiculo = async (vehiculo: Vehiculo) => {
                                       handleEditInputChange('fechaUltimoMantenimiento', event.target.value)
                                     }
                                   />
-                                </div>
-                              </div>
+        </div>
+      </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                                 <div>
                                   <p className="text-xs uppercase text-dark/60">Dispositivo asignado</p>
@@ -599,6 +765,32 @@ const handleDeleteVehiculo = async (vehiculo: Vehiculo) => {
               )}
             </TableBody>
           </Table>
+        </div>
+        <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-dark/70">
+            {resumenVehiculos || (!isLoading && !error ? 'No hay vehiculos para mostrar.' : '')}
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-dark/70">Por pagina</span>
+            <Select value={String(size)} onChange={(e) => handlePageSizeChange(e.target.value)} className="w-28" disabled={isLoading}>
+              {PAGE_SIZES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <Button type="button" color="light" size="xs" onClick={handlePreviousPage} disabled={isFirstPage || isLoading}>
+              Anterior
+            </Button>
+            <span className="text-dark/70">
+              Pagina {currentPageLabel} de {computedTotalPages}
+            </span>
+            <Button type="button" color="light" size="xs" onClick={handleNextPage} disabled={isLastPage || isLoading}>
+              Siguiente
+            </Button>
+          </div>
         </div>
         {actionMessage && (
           <p

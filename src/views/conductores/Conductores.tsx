@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, TextInput } from 'flowbite-react';
+import { Button, Select, TextInput } from 'flowbite-react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { useAuthorizedApi } from 'src/hooks/useAuthorizedApi';
 
@@ -27,6 +27,23 @@ type Conductor = {
   nroLicencia: string;
   categoria: string;
   fechaExpiracionLicencia: string | null;
+};
+
+type ConductoresPage = {
+  content?: ConductorApi[];
+  totalElements?: number;
+  totalPages?: number;
+  number?: number;
+  size?: number;
+  first?: boolean;
+  last?: boolean;
+  numberOfElements?: number;
+};
+
+type ApiResponse<T> = {
+  code?: number;
+  data?: T;
+  message?: string;
 };
 
 const sanitize = (value?: string | null): string => (value ?? '').trim();
@@ -77,6 +94,8 @@ const calculateAge = (value: string | null): number | null => {
   return age >= 0 ? age : null;
 };
 
+const PAGE_SIZES = [5, 10, 15, 20] as const;
+
 const Conductores: React.FC = () => {
   const { token, authorizedFetch } = useAuthorizedApi();
   const [query, setQuery] = useState('');
@@ -85,6 +104,12 @@ const Conductores: React.FC = () => {
   const [selectedConductor, setSelectedConductor] = useState<Conductor | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [size, setSize] = useState<number>(PAGE_SIZES[0]);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [isFirstPage, setIsFirstPage] = useState(true);
+  const [isLastPage, setIsLastPage] = useState(true);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -94,36 +119,99 @@ const Conductores: React.FC = () => {
   }, [query]);
 
   useEffect(() => {
+    setPage(0);
+  }, [searchTerm]);
+
+  useEffect(() => {
     if (!token) {
       setConductores([]);
       setSelectedConductor(null);
+      setTotalElements(0);
+      setTotalPages(0);
+      setIsFirstPage(true);
+      setIsLastPage(true);
       return;
     }
 
     let isMounted = true;
     const controller = new AbortController();
-    const nombreParam = encodeURIComponent(searchTerm);
 
     const obtenerConductores = async () => {
       setIsLoading(true);
       setError(null);
+      const safePage = Math.max(0, page);
       try {
-        const response = await authorizedFetch('/api/v1/usuarios/conductores/all?nombre=' + nombreParam, {
+        const params = new URLSearchParams({
+          nombre: searchTerm,
+          page: String(safePage),
+          size: String(size),
+        });
+        const response = await authorizedFetch(`/api/v1/usuarios/conductores/all?${params.toString()}`, {
           signal: controller.signal,
         });
 
+        const json = (await response.json().catch(() => null)) as ApiResponse<ConductoresPage | ConductorApi[]> | null;
+
         if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || 'Error al obtener conductores (' + response.status + ').');
+          const message = json?.message ?? `Error al obtener conductores (${response.status}).`;
+          throw new Error(message);
         }
 
-        const json = (await response.json()) as { data?: ConductorApi[] };
+        if (json?.code && json.code !== 200) {
+          throw new Error(json.message || 'Error al obtener conductores.');
+        }
+
+        const data = json?.data;
+        let itemsSource: ConductorApi[] = [];
+        let totalRegistros = 0;
+        let totalPaginas = 0;
+        let firstFlag = safePage <= 0;
+        let lastFlag = true;
+
+        if (Array.isArray(data)) {
+          itemsSource = data;
+          totalRegistros = data.length;
+          totalPaginas = data.length ? 1 : 0;
+          firstFlag = true;
+          lastFlag = true;
+        } else if (data && typeof data === 'object') {
+          const pageData = data as ConductoresPage;
+          if (Array.isArray(pageData.content)) {
+            itemsSource = pageData.content;
+          }
+          totalRegistros =
+            typeof pageData.totalElements === 'number' ? pageData.totalElements : itemsSource.length;
+          if (typeof pageData.totalPages === 'number') {
+            totalPaginas = pageData.totalPages;
+          } else if (totalRegistros > 0 && size > 0) {
+            totalPaginas = Math.ceil(totalRegistros / size);
+          } else {
+            totalPaginas = itemsSource.length ? 1 : 0;
+          }
+          firstFlag = typeof pageData.first === 'boolean' ? pageData.first : firstFlag;
+          lastFlag =
+            typeof pageData.last === 'boolean'
+              ? pageData.last
+              : totalPaginas
+                ? safePage >= totalPaginas - 1
+                : itemsSource.length < size;
+        }
+
         if (!isMounted) {
           return;
         }
 
-        const items = Array.isArray(json.data) ? json.data.map(mapConductor) : [];
+        if (totalPaginas > 0 && safePage >= totalPaginas) {
+          setPage(Math.max(totalPaginas - 1, 0));
+          return;
+        }
+
+        const items = itemsSource.map(mapConductor);
         setConductores(items);
+        setTotalElements(totalRegistros);
+        setTotalPages(totalPaginas);
+        setIsFirstPage(firstFlag);
+        setIsLastPage(lastFlag);
         setSelectedConductor((prev) => {
           if (!prev) {
             return null;
@@ -131,15 +219,17 @@ const Conductores: React.FC = () => {
           return items.find((item) => item.id === prev.id) ?? null;
         });
       } catch (err) {
-        if (controller.signal.aborted) {
+        if (!isMounted || controller.signal.aborted) {
           return;
         }
         console.error('Error al obtener conductores', err);
-        if (isMounted) {
-          setError('No se pudieron cargar los conductores. Intenta nuevamente.');
-          setConductores([]);
-          setSelectedConductor(null);
-        }
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar los conductores. Intenta nuevamente.');
+        setConductores([]);
+        setSelectedConductor(null);
+        setTotalElements(0);
+        setTotalPages(0);
+        setIsFirstPage(true);
+        setIsLastPage(true);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -153,7 +243,43 @@ const Conductores: React.FC = () => {
       isMounted = false;
       controller.abort();
     };
-  }, [authorizedFetch, searchTerm, token]);
+  }, [authorizedFetch, page, searchTerm, size, token]);
+
+  const startIndex = conductores.length ? page * size + 1 : 0;
+  const endIndex = conductores.length ? startIndex + conductores.length - 1 : 0;
+  const hasTotal = totalElements > 0;
+  const computedTotalPages =
+    totalPages > 0 ? totalPages : hasTotal && size > 0 ? Math.ceil(totalElements / size) || 1 : 1;
+  const currentPageLabel = Math.min(page + 1, computedTotalPages || 1);
+  const resumenConductores =
+    hasTotal && startIndex && endIndex
+      ? `Mostrando ${startIndex}-${endIndex} de ${totalElements} conductores`
+      : hasTotal
+        ? `Total de conductores: ${totalElements}`
+        : '';
+
+  const handleNextPage = () => {
+    if (isLastPage || isLoading) {
+      return;
+    }
+    setPage((prev) => prev + 1);
+  };
+
+  const handlePreviousPage = () => {
+    if (isFirstPage || isLoading) {
+      return;
+    }
+    setPage((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return;
+    }
+    setSize(parsed);
+    setPage(0);
+  };
 
   return (
     <>
@@ -227,6 +353,32 @@ const Conductores: React.FC = () => {
               );
             })
           )}
+        </div>
+        <div className="mt-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-dark/70">
+            {resumenConductores || (!isLoading && !error ? 'No hay conductores para mostrar.' : '')}
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-dark/70">Por pagina</span>
+            <Select value={String(size)} onChange={(e) => handlePageSizeChange(e.target.value)} className="w-28" disabled={isLoading}>
+              {PAGE_SIZES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <Button type="button" color="light" size="xs" onClick={handlePreviousPage} disabled={isFirstPage || isLoading}>
+              Anterior
+            </Button>
+            <span className="text-dark/70">
+              Pagina {currentPageLabel} de {computedTotalPages}
+            </span>
+            <Button type="button" color="light" size="xs" onClick={handleNextPage} disabled={isLastPage || isLoading}>
+              Siguiente
+            </Button>
+          </div>
         </div>
       </div>
 

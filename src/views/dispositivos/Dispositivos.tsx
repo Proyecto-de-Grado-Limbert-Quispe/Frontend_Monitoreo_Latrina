@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeadCell, TableRow, Badge, Button, TextInput } from 'flowbite-react';
+import { Table, TableBody, TableCell, TableHead, TableHeadCell, TableRow, Badge, Button, TextInput, Select } from 'flowbite-react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { useAuthorizedApi } from 'src/hooks/useAuthorizedApi';
 import { useTraccarApi } from 'src/hooks/useTraccarApi';
@@ -18,6 +18,23 @@ type Dispositivo = {
   modelo: string;
   activo: number | null;
   status: number | null;
+};
+
+type DispositivosPage = {
+  content?: DispositivoApi[];
+  totalElements?: number;
+  totalPages?: number;
+  number?: number;
+  size?: number;
+  first?: boolean;
+  last?: boolean;
+  numberOfElements?: number;
+};
+
+type ApiResponse<T> = {
+  code?: number;
+  data?: T;
+  message?: string;
 };
 
 const sanitize = (value?: string | null): string => (value ?? '').trim();
@@ -62,6 +79,8 @@ const statusLabel = (value: number | null): string => {
   return 'Sin registro';
 };
 
+const PAGE_SIZES = [5, 10, 15, 20] as const;
+
 const Dispositivos: React.FC = () => {
   const { token, authorizedFetch } = useAuthorizedApi();
   const { traccarFetch } = useTraccarApi();
@@ -79,38 +98,104 @@ const Dispositivos: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [size, setSize] = useState<number>(PAGE_SIZES[1]);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [isFirstPage, setIsFirstPage] = useState(true);
+  const [isLastPage, setIsLastPage] = useState(true);
 
   useEffect(() => {
     if (!token) {
       setDispositivos([]);
       setSelectedDispositivo(null);
+      setTotalElements(0);
+      setTotalPages(0);
+      setIsFirstPage(true);
+      setIsLastPage(true);
       return;
     }
 
     let isMounted = true;
     const controller = new AbortController();
     const term = searchTerm.trim() === '' ? 'all' : searchTerm.trim();
+    const safePage = Math.max(page, 0);
 
     const obtenerDispositivos = async () => {
       setLoading(true);
       setError(null);
       try {
-        const response = await authorizedFetch(`/api/v1/dispositivosGps/${encodeURIComponent(term)}`, {
-          signal: controller.signal,
+        const params = new URLSearchParams({
+          page: String(safePage),
+          size: String(size),
         });
+        const response = await authorizedFetch(
+          `/api/v1/dispositivosGps/${encodeURIComponent(term)}?${params.toString()}`,
+          {
+            signal: controller.signal,
+          },
+        );
 
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `Error al obtener dispositivos (${response.status}).`);
-        }
-
-        const json = (await response.json()) as { data?: DispositivoApi[] };
+        const json = (await response.json().catch(() => null)) as ApiResponse<DispositivosPage | DispositivoApi[]> | null;
         if (!isMounted) {
           return;
         }
 
-        const items = Array.isArray(json.data) ? json.data.map(mapDispositivo) : [];
+        if (!response.ok) {
+          const text = json?.message ?? '';
+          throw new Error(text || `Error al obtener dispositivos (${response.status}).`);
+        }
+
+        if (json?.code && json.code !== 200) {
+          throw new Error(json.message || 'Error al obtener dispositivos.');
+        }
+
+        const data = json?.data;
+        let itemsSource: DispositivoApi[] = [];
+        let totalRegistros = 0;
+        let totalPaginas = 0;
+        let firstFlag = safePage <= 0;
+        let lastFlag = true;
+
+        if (Array.isArray(data)) {
+          itemsSource = data;
+          totalRegistros = data.length;
+          totalPaginas = data.length ? 1 : 0;
+          firstFlag = true;
+          lastFlag = true;
+        } else if (data && typeof data === 'object') {
+          const pageData = data as DispositivosPage;
+          if (Array.isArray(pageData.content)) {
+            itemsSource = pageData.content;
+          }
+          totalRegistros = typeof pageData.totalElements === 'number' ? pageData.totalElements : itemsSource.length;
+          if (typeof pageData.totalPages === 'number') {
+            totalPaginas = pageData.totalPages;
+          } else if (totalRegistros > 0 && size > 0) {
+            totalPaginas = Math.ceil(totalRegistros / size);
+          } else {
+            totalPaginas = itemsSource.length ? 1 : 0;
+          }
+          firstFlag = typeof pageData.first === 'boolean' ? pageData.first : firstFlag;
+          lastFlag =
+            typeof pageData.last === 'boolean'
+              ? pageData.last
+              : totalPaginas
+                ? safePage >= totalPaginas - 1
+                : itemsSource.length < size;
+        }
+
+        if (totalPaginas > 0 && safePage >= totalPaginas) {
+          setPage(Math.max(totalPaginas - 1, 0));
+          return;
+        }
+
+        const items = itemsSource.map(mapDispositivo);
         setDispositivos(items);
+        setTotalElements(totalRegistros);
+        setTotalPages(totalPaginas);
+        setIsFirstPage(firstFlag);
+        setIsLastPage(lastFlag);
         setSelectedDispositivo((prev) => (prev && items.some((item) => item.id === prev.id) ? prev : null));
       } catch (error) {
         if (controller.signal.aborted) {
@@ -121,6 +206,10 @@ const Dispositivos: React.FC = () => {
           setError('No se pudieron cargar los dispositivos. Intenta nuevamente.');
           setDispositivos([]);
           setSelectedDispositivo(null);
+          setTotalElements(0);
+          setTotalPages(0);
+          setIsFirstPage(true);
+          setIsLastPage(true);
         }
       } finally {
         if (isMounted) {
@@ -135,18 +224,20 @@ const Dispositivos: React.FC = () => {
       isMounted = false;
       controller.abort();
     };
-  }, [authorizedFetch, searchTerm, token, reloadKey]);
+  }, [authorizedFetch, page, searchTerm, size, token, reloadKey]);
 
   const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalized = query.trim();
     setSearchTerm(normalized || 'all');
+    setPage(0);
   };
 
   const handleClear = () => {
     setQuery('');
     setSearchTerm('all');
     setSelectedDispositivo(null);
+    setPage(0);
   };
 
   const toggleDetalle = (dispositivo: Dispositivo) => {
@@ -228,6 +319,7 @@ const Dispositivos: React.FC = () => {
       resetForm();
       setQuery('');
       setSearchTerm('all');
+      setPage(0);
       setReloadKey((prev) => prev + 1);
     } catch (error) {
       console.error('Error al registrar dispositivo', error);
@@ -247,6 +339,40 @@ const Dispositivos: React.FC = () => {
   };
 
   const dispositivosEnTabla = useMemo(() => dispositivos, [dispositivos]);
+  const startIndex = dispositivosEnTabla.length ? page * size + 1 : 0;
+  const endIndex = dispositivosEnTabla.length ? startIndex + dispositivosEnTabla.length - 1 : 0;
+  const resumen =
+    totalElements > 0 && startIndex && endIndex
+      ? `Mostrando ${startIndex}-${endIndex} de ${totalElements} dispositivos`
+      : totalElements > 0
+        ? `Total de dispositivos: ${totalElements}`
+        : '';
+  const computedTotalPages =
+    totalPages > 0 ? totalPages : totalElements > 0 && size > 0 ? Math.ceil(totalElements / size) || 1 : 1;
+  const currentPageLabel = Math.min(page + 1, computedTotalPages);
+
+  const handleNextPage = () => {
+    if (isLastPage || loading) {
+      return;
+    }
+    setPage((prev) => prev + 1);
+  };
+
+  const handlePreviousPage = () => {
+    if (isFirstPage || loading) {
+      return;
+    }
+    setPage((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return;
+    }
+    setSize(parsed);
+    setPage(0);
+  };
 
   return (
     <>
@@ -287,8 +413,8 @@ const Dispositivos: React.FC = () => {
           <h6 className="text-base font-medium">Listado de dispositivos</h6>
           {loading && <span className="text-sm text-dark/60">Cargando dispositivos...</span>}
         </div>
-        <div className="mt-3 overflow-x-auto">
-          <Table hoverable>
+      <div className="mt-3 overflow-x-auto">
+        <Table hoverable>
             <TableHead className="border-b border-gray-300">
               <TableRow>
                 <TableHeadCell className="p-6 text-base">Codigo</TableHeadCell>
@@ -347,6 +473,30 @@ const Dispositivos: React.FC = () => {
               )}
             </TableBody>
           </Table>
+        </div>
+        <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-dark/70">{resumen || (!loading && !error ? 'No hay dispositivos para mostrar.' : '')}</div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-dark/70">Por pagina</span>
+            <Select value={String(size)} onChange={(e) => handlePageSizeChange(e.target.value)} className="w-28" disabled={loading}>
+              {PAGE_SIZES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <Button type="button" color="light" size="xs" onClick={handlePreviousPage} disabled={isFirstPage || loading}>
+              Anterior
+            </Button>
+            <span className="text-dark/70">
+              Pagina {currentPageLabel} de {computedTotalPages}
+            </span>
+            <Button type="button" color="light" size="xs" onClick={handleNextPage} disabled={isLastPage || loading}>
+              Siguiente
+            </Button>
+          </div>
         </div>
       </div>
 

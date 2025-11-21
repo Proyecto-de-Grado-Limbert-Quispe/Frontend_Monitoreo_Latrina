@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeadCell, TableRow, Button, TextInput, Badge } from 'flowbite-react';
+import { Table, TableBody, TableCell, TableHead, TableHeadCell, TableRow, Button, TextInput, Badge, Select } from 'flowbite-react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { useNavigate } from 'react-router';
 import { useAuthorizedApi } from 'src/hooks/useAuthorizedApi';
@@ -45,6 +45,25 @@ type ProgramacionItem = {
   conductorNombre: string;
   dispositivoId: string | null;
 };
+
+type ProgramacionPage = {
+  content?: ProgramacionApi[];
+  totalElements?: number;
+  totalPages?: number;
+  number?: number;
+  size?: number;
+  first?: boolean;
+  last?: boolean;
+  numberOfElements?: number;
+};
+
+type ApiResponse<T> = {
+  code?: number;
+  data?: T;
+  message?: string;
+};
+
+const PAGE_SIZES = [5, 8, 10, 15] as const;
 
 const formatDateDisplay = (value: string | null): string => {
   const normalized = normalizeIsoDateString(value);
@@ -228,10 +247,20 @@ const PanelMonitoreo: React.FC = () => {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const todayIsoDate = useMemo(() => getTodayIsoDate(), []);
+  const [page, setPage] = useState(0);
+  const [size, setSize] = useState<number>(PAGE_SIZES[1]);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [isFirstPage, setIsFirstPage] = useState(true);
+  const [isLastPage, setIsLastPage] = useState(true);
 
   useEffect(() => {
     if (!token) {
       setItems([]);
+      setTotalElements(0);
+      setTotalPages(0);
+      setIsFirstPage(true);
+      setIsLastPage(true);
       return;
     }
 
@@ -241,11 +270,14 @@ const PanelMonitoreo: React.FC = () => {
     const nroParam = searchParams.nro.trim();
     const desdeParam = formatDateForApi(searchParams.desde);
     const hastaParam = formatDateForApi(searchParams.hasta);
+    const safePage = Math.max(page, 0);
 
     const query = new URLSearchParams({
       nro: nroParam,
       desde: desdeParam,
       hasta: hastaParam,
+      page: String(safePage),
+      size: String(size),
     });
 
     const fetchProgramaciones = async () => {
@@ -256,18 +288,66 @@ const PanelMonitoreo: React.FC = () => {
           signal: controller.signal,
         });
 
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || 'Error al obtener las programaciones (' + response.status + ').');
-        }
-
-        const json = (await response.json()) as { data?: ProgramacionApi[] };
+        const json = (await response.json().catch(() => null)) as ApiResponse<ProgramacionPage | ProgramacionApi[]> | null;
         if (!isMounted) {
           return;
         }
 
-        const records = Array.isArray(json.data) ? json.data.map(mapProgramacion) : [];
+        if (!response.ok) {
+          const text = json?.message ?? 'Error al obtener las programaciones (' + response.status + ').';
+          throw new Error(text);
+        }
+
+        if (json?.code && json.code !== 200) {
+          throw new Error(json.message || 'Error al obtener las programaciones.');
+        }
+
+        const data = json?.data;
+        let source: ProgramacionApi[] = [];
+        let totalRegistros = 0;
+        let totalPaginas = 0;
+        let firstFlag = safePage <= 0;
+        let lastFlag = true;
+
+        if (Array.isArray(data)) {
+          source = data;
+          totalRegistros = data.length;
+          totalPaginas = data.length ? 1 : 0;
+          firstFlag = true;
+          lastFlag = true;
+        } else if (data && typeof data === 'object') {
+          const pageData = data as ProgramacionPage;
+          if (Array.isArray(pageData.content)) {
+            source = pageData.content;
+          }
+          totalRegistros = typeof pageData.totalElements === 'number' ? pageData.totalElements : source.length;
+          if (typeof pageData.totalPages === 'number') {
+            totalPaginas = pageData.totalPages;
+          } else if (totalRegistros > 0 && size > 0) {
+            totalPaginas = Math.ceil(totalRegistros / size);
+          } else {
+            totalPaginas = source.length ? 1 : 0;
+          }
+          firstFlag = typeof pageData.first === 'boolean' ? pageData.first : firstFlag;
+          lastFlag =
+            typeof pageData.last === 'boolean'
+              ? pageData.last
+              : totalPaginas
+                ? safePage >= totalPaginas - 1
+                : source.length < size;
+        }
+
+        if (totalPaginas > 0 && safePage >= totalPaginas) {
+          setPage(Math.max(totalPaginas - 1, 0));
+          return;
+        }
+
+        const records = source.map(mapProgramacion);
         setItems(records);
+        setTotalElements(totalRegistros);
+        setTotalPages(totalPaginas);
+        setIsFirstPage(firstFlag);
+        setIsLastPage(lastFlag);
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -276,6 +356,10 @@ const PanelMonitoreo: React.FC = () => {
         if (isMounted) {
           setError('No se pudieron cargar las programaciones. Intenta nuevamente.');
           setItems([]);
+          setTotalElements(0);
+          setTotalPages(0);
+          setIsFirstPage(true);
+          setIsLastPage(true);
         }
       } finally {
         if (isMounted) {
@@ -290,7 +374,7 @@ const PanelMonitoreo: React.FC = () => {
       isMounted = false;
       controller.abort();
     };
-  }, [authorizedFetch, searchParams, token]);
+  }, [authorizedFetch, page, searchParams, size, token]);
 
   const closeEditForm = () => {
     setEditingProgramacion(null);
@@ -397,6 +481,7 @@ const PanelMonitoreo: React.FC = () => {
 
   const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setPage(0);
     setSearchParams({ nro: nro.trim(), desde, hasta });
   };
 
@@ -404,10 +489,45 @@ const PanelMonitoreo: React.FC = () => {
     setNro('');
     setDesde('');
     setHasta('');
+    setPage(0);
     setSearchParams({ nro: '', desde: '', hasta: '' });
   };
 
   const programaciones = useMemo(() => items, [items]);
+  const startIndex = programaciones.length ? page * size + 1 : 0;
+  const endIndex = programaciones.length ? startIndex + programaciones.length - 1 : 0;
+  const resumen =
+    totalElements > 0 && startIndex && endIndex
+      ? `Mostrando ${startIndex}-${endIndex} de ${totalElements} programaciones`
+      : totalElements > 0
+        ? `Total de programaciones: ${totalElements}`
+        : '';
+  const computedTotalPages =
+    totalPages > 0 ? totalPages : totalElements > 0 && size > 0 ? Math.ceil(totalElements / size) || 1 : 1;
+  const currentPageLabel = Math.min(page + 1, computedTotalPages);
+
+  const handleNextPage = () => {
+    if (isLastPage || loading) {
+      return;
+    }
+    setPage((prev) => prev + 1);
+  };
+
+  const handlePreviousPage = () => {
+    if (isFirstPage || loading) {
+      return;
+    }
+    setPage((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return;
+    }
+    setSize(parsed);
+    setPage(0);
+  };
 
   return (
     <>
@@ -560,6 +680,30 @@ const PanelMonitoreo: React.FC = () => {
               )}
             </TableBody>
           </Table>
+        </div>
+        <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-dark/70">{resumen || (!loading && !error ? 'No hay programaciones para mostrar.' : '')}</div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-dark/70">Por pagina</span>
+            <Select value={String(size)} onChange={(e) => handlePageSizeChange(e.target.value)} className="w-28" disabled={loading}>
+              {PAGE_SIZES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <Button type="button" color="light" size="xs" onClick={handlePreviousPage} disabled={isFirstPage || loading}>
+              Anterior
+            </Button>
+            <span className="text-dark/70">
+              Pagina {currentPageLabel} de {computedTotalPages}
+            </span>
+            <Button type="button" color="light" size="xs" onClick={handleNextPage} disabled={isLastPage || loading}>
+              Siguiente
+            </Button>
+          </div>
         </div>
         {actionStatus && (
           <p
