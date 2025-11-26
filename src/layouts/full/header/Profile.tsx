@@ -10,7 +10,17 @@ const Profile = () => {
 
   const handleLogout = () => {
     clearAuth();
-    navigate("/auth/login", { replace: true });
+    if (typeof window !== "undefined") {
+      try {
+        window.open("", "_self", "");
+      } catch (error) {
+        console.warn("No se pudo abrir una ventana en blanco antes de cerrar", error);
+      }
+      alert("La sesión ha sido cerrada correctamente. Puedes cerrar esta pestaña.");
+      if (typeof window.close === "function") {
+        window.close();
+      }
+    }
   };
 
   const handleGoToProfile = () => {

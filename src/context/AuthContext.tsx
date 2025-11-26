@@ -69,7 +69,7 @@ const extractTokenFromLocation = (location: Location): string | null => {
 const getLandingPath = (roleId: number | null): string => {
   switch (roleId) {
     case 2:
-      return '/menu/programar-salida';
+      return '/menu/reportes';
     case 104:
       return '/menu/entregas';
     default:

@@ -5,11 +5,11 @@ import { Link, useNavigate } from "react-router";
 
 const AuthLogin = () => {
   const navigate = useNavigate();
-  const handleSubmit = (event:React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     console.log(event);
-     navigate("/");
-  }
+    navigate("/menu/reportes");
+  };
   return (
     <>
       <form onSubmit={handleSubmit} >

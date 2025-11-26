@@ -2,7 +2,7 @@ import React from 'react';
 import { ChildItem } from '../Sidebaritems';
 import { SidebarItem } from 'flowbite-react';
 import { Icon } from '@iconify/react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useAuth } from 'src/context/AuthContext';
 
 interface NavItemsProps {
@@ -11,7 +11,6 @@ interface NavItemsProps {
 
 const NavItems: React.FC<NavItemsProps> = ({ item }) => {
   const location = useLocation();
-  const navigate = useNavigate();
   const { clearAuth } = useAuth();
   const pathname = location.pathname;
 
@@ -19,7 +18,17 @@ const NavItems: React.FC<NavItemsProps> = ({ item }) => {
     if (item.url === '/auth/login') {
       event.preventDefault();
       clearAuth();
-      navigate('/auth/login', { replace: true });
+      if (typeof window !== 'undefined') {
+        try {
+          window.open('', '_self', '');
+        } catch (error) {
+          console.warn('No se pudo abrir una ventana en blanco antes de cerrar', error);
+        }
+        alert('La sesión ha sido cerrada correctamente. Puedes cerrar esta pestaña.');
+        if (typeof window.close === 'function') {
+          window.close();
+        }
+      }
     }
   };
 
