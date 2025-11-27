@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 const STORAGE_KEY = 'traccarBaseUrl';
 const DEFAULT_URL =
   (import.meta.env as unknown as Record<string, string | undefined>)?.VITE_TRACCAR_BASE_URL ??
-  'https://immunology-problems-newark-bearing.trycloudflare.com';
+  'https://dow-del-coalition-volumes.trycloudflare.com';
 
 const LOCAL_HOSTS = /^(?:localhost|127\.0\.0\.1)$/i;
 const isBrowser = typeof window !== 'undefined';

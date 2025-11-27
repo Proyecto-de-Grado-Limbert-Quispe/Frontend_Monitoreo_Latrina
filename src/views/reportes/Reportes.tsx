@@ -45,7 +45,7 @@ type ApiResponse<T> = {
 const ESTADO_ORDER: EstadoReporte[] = ['entregado', 'en_proceso', 'no_entregado'];
 
 const ESTADO_INFO: Record<EstadoReporte, { label: string; color: string }> = {
-  entregado: { label: 'Entregado', color: 'var(--color-primary)' },
+  entregado: { label: 'Entregado', color: 'var(--color-success)' },
   en_proceso: { label: 'En proceso', color: 'var(--color-warning)' },
   no_entregado: { label: 'No entregado', color: 'var(--color-error)' },
 };
@@ -321,12 +321,9 @@ const Reportes = () => {
     });
 
     const totalRegistros = statusTotals.entregado + statusTotals.en_proceso + statusTotals.no_entregado;
-    const porcentajeEntregado = totalRegistros
-      ? Math.round((statusTotals.entregado / totalRegistros) * 100)
-      : 0;
-    const porcentajeAtrasos = totalRegistros
-      ? Math.round((statusTotals.no_entregado / totalRegistros) * 100)
-      : 0;
+    const porcentajeEntregado = totalRegistros ? Math.round((statusTotals.entregado / totalRegistros) * 100) : 0;
+    const porcentajeEnProceso = totalRegistros ? Math.round((statusTotals.en_proceso / totalRegistros) * 100) : 0;
+    const porcentajeAtrasos = totalRegistros ? Math.round((statusTotals.no_entregado / totalRegistros) * 100) : 0;
 
     const sortedDateKeys = Object.keys(dateBuckets).sort((a, b) => {
       const sortA = dateBuckets[a].sortKey;
@@ -370,7 +367,16 @@ const Reportes = () => {
       xaxis: { categories: stackedCategories, labels: { style: { colors: '#a1aab2' } } },
       yaxis: { labels: { style: { colors: '#a1aab2' } } },
       plotOptions: { bar: { columnWidth: '45%', borderRadius: 4 } },
-      dataLabels: { enabled: false },
+      dataLabels: {
+        enabled: true,
+        formatter: (value) => {
+          if (typeof value !== 'number' || value <= 0) {
+            return '';
+          }
+          return `${Math.round(value)}`;
+        },
+        style: { colors: ['#1f2937'], fontWeight: 600 },
+      },
       legend: { position: 'top' },
       grid: { borderColor: 'rgba(0,0,0,.08)' },
       tooltip: { theme: 'dark' },
@@ -381,8 +387,28 @@ const Reportes = () => {
       chart: { type: 'donut', fontFamily: 'inherit' },
       colors: ESTADO_ORDER.map((key) => ESTADO_INFO[key].color),
       stroke: { colors: ['var(--color-surface-ld)'], width: 3 },
-      plotOptions: { pie: { donut: { size: '75%' } } },
-      dataLabels: { enabled: false },
+      plotOptions: {
+        pie: {
+          donut: { size: '75%' },
+          dataLabels: {
+            offset: -10,
+          },
+        },
+      },
+      dataLabels: {
+        enabled: true,
+        formatter: (_value, opts) => {
+          const index = typeof opts.seriesIndex === 'number' ? opts.seriesIndex : -1;
+          const series =
+            index >= 0 && Array.isArray(opts.w?.config?.series) ? opts.w.config.series[index] : undefined;
+          if (typeof series === 'number') {
+            return `${Math.round(series)}`;
+          }
+          const fallback =
+            index >= 0 && Array.isArray(opts.w?.globals?.series) ? opts.w.globals.series[index] : undefined;
+          return typeof fallback === 'number' ? `${Math.round(fallback)}` : '';
+        },
+      },
       legend: { show: true },
       tooltip: { theme: 'dark' },
     };
@@ -392,8 +418,19 @@ const Reportes = () => {
       xaxis: { categories: driverCategories, labels: { style: { colors: '#a1aab2' } } },
       yaxis: { labels: { style: { colors: '#a1aab2' } } },
       plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: '45%' } },
-      colors: ['var(--color-primary)'],
-      dataLabels: { enabled: false },
+      colors: ['var(--color-success)'],
+      dataLabels: {
+        enabled: true,
+        textAnchor: 'start',
+        offsetX: 8,
+        formatter: (value) => {
+          if (typeof value !== 'number') {
+            return '';
+          }
+          return `${Math.round(value)}`;
+        },
+        style: { colors: ['#1f2937'], fontWeight: 600 },
+      },
       grid: { borderColor: 'rgba(0,0,0,.08)' },
       tooltip: { theme: 'dark' },
     };
@@ -402,6 +439,7 @@ const Reportes = () => {
       statusTotals,
       totalRegistros,
       porcentajeEntregado,
+      porcentajeEnProceso,
       porcentajeAtrasos,
       stackedOptions,
       stackedSeries,
@@ -425,6 +463,7 @@ const Reportes = () => {
     productividadLabel,
     totalRegistros,
     porcentajeEntregado,
+    porcentajeEnProceso,
     porcentajeAtrasos,
   } = charts;
 
@@ -544,7 +583,7 @@ const Reportes = () => {
           <CardBox>
             <h5 className="card-title mb-4">Entregas realizadas</h5>
             <Chart options={donutOptions} series={donutSeries} type="donut" height={260} />
-            <div className="mt-4 grid grid-cols-3 text-center">
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 text-center gap-3">
               <div>
                 <div className="text-sm text-dark/60">Total</div>
                 <div className="text-xl font-semibold">{totalRegistros}</div>
@@ -552,6 +591,10 @@ const Reportes = () => {
               <div>
                 <div className="text-sm text-dark/60">% Entregadas</div>
                 <div className="text-xl font-semibold">{porcentajeEntregado}%</div>
+              </div>
+              <div>
+                <div className="text-sm text-dark/60">% En proceso</div>
+                <div className="text-xl font-semibold">{porcentajeEnProceso}%</div>
               </div>
               <div>
                 <div className="text-sm text-dark/60">% No entregado</div>
@@ -562,7 +605,7 @@ const Reportes = () => {
         </div>
         <div className="col-span-12 md:col-span-7">
           <CardBox>
-            <h5 className="card-title mb-4">Entregas por dia (apiladas)</h5>
+            <h5 className="card-title mb-4">Entregas por dia</h5>
             <Chart options={stackedOptions} series={stackedSeries} type="bar" height={300} />
           </CardBox>
         </div>
@@ -570,6 +613,10 @@ const Reportes = () => {
 
       <CardBox>
         <h5 className="card-title mb-4">Productividad por conductor</h5>
+        <div className="flex items-center gap-2 mb-3 text-sm text-dark/80">
+          <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: 'var(--color-success)' }} />
+          <span>Entregas realizadas</span>
+        </div>
         <Chart options={productividadOptions} series={productividadSeries} type="bar" height={320} />
         <p className="text-sm text-dark/70 mt-3">{productividadLabel}</p>
       </CardBox>

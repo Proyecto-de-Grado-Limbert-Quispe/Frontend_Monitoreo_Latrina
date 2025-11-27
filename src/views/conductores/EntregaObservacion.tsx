@@ -7,11 +7,35 @@ import { useAuth } from 'src/context/AuthContext';
 type EstadoEntregaSelect = 'Entregado' | 'No Entregado';
 type EstadoEntregaValue = 1 | 2;
 
+type ProductoResumen = {
+  codigo?: string | null;
+  nombre?: string | null;
+  descripcion?: string | null;
+  cantidad?: number | null;
+  precioUnitario?: number | null;
+  orden?: number | null;
+};
+
 type LocationState = {
   notaId?: string | null;
+  producto?: ProductoResumen | null;
 };
 
 const mapEstadoToValue = (estado: EstadoEntregaSelect): EstadoEntregaValue => (estado === 'Entregado' ? 2 : 1);
+
+const formatCantidad = (value?: number | null): string => {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+};
+
+const formatPrecio = (value?: number | null): string => {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+  return value.toFixed(2);
+};
 
 const EntregaObservacion: React.FC = () => {
   const navigate = useNavigate();
@@ -26,6 +50,7 @@ const EntregaObservacion: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const state = (location.state ?? {}) as LocationState;
   const salidaDetalleId = productoId ?? state.notaId ?? '';
+  const producto = state.producto ?? null;
 
   const canSubmit = useMemo(() => Boolean(conductorId && salidaDetalleId && observacion.trim()), [conductorId, salidaDetalleId, observacion]);
 
@@ -86,6 +111,44 @@ const EntregaObservacion: React.FC = () => {
 
       {/* Encabezado */}
       <h3 className="text-2xl font-semibold text-center mb-4">Formulario de Registro - Observacion</h3>
+
+      {/* Producto seleccionado */}
+      <div className="rounded-xl dark:shadow-dark-md shadow-md bg-white dark:bg-darkgray p-6 mb-6">
+        <h5 className="card-title mb-4">Detalle del producto</h5>
+        {producto ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p className="text-xs uppercase text-dark/50">Codigo</p>
+              <p className="text-sm font-medium">{producto.codigo || '-'}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-dark/50">Orden</p>
+              <p className="text-sm font-medium">{producto.orden ?? '-'}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-dark/50">Producto</p>
+              <p className="text-sm font-medium">{producto.nombre || '-'}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-dark/50">Cantidad</p>
+              <p className="text-sm font-medium">{formatCantidad(producto.cantidad)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-dark/50">Precio unitario</p>
+              <p className="text-sm font-medium">{formatPrecio(producto.precioUnitario)}</p>
+            </div>
+            <div className="md:col-span-2">
+              <p className="text-xs uppercase text-dark/50">Descripcion</p>
+              <p className="text-sm font-medium">{producto.descripcion || 'Sin descripcion registrada'}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-dark/70">
+            No se encontro la informacion del producto. Regresa al detalle de entrega y vuelve a seleccionar la observacion
+            para completar los datos.
+          </p>
+        )}
+      </div>
 
       {/* Card Form */}
       <div className="rounded-xl dark:shadow-dark-md shadow-md bg-white dark:bg-darkgray p-6">

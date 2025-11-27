@@ -37,6 +37,11 @@ type ApiResponse<T> = {
   message?: string;
 };
 
+type FeedbackMessage = {
+  type: 'success' | 'error';
+  message: string;
+};
+
 const sanitize = (value?: string | null): string => (value ?? '').trim();
 
 const mapDispositivo = (dispositivo: DispositivoApi): Dispositivo => ({
@@ -104,6 +109,8 @@ const Dispositivos: React.FC = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [isFirstPage, setIsFirstPage] = useState(true);
   const [isLastPage, setIsLastPage] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<FeedbackMessage | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -338,6 +345,74 @@ const Dispositivos: React.FC = () => {
     }
   };
 
+  const handleEliminarDispositivo = async (dispositivo: Dispositivo) => {
+    if (!token) {
+      setDeleteFeedback({
+        type: 'error',
+        message: 'No se encontro un token de autenticacion.',
+      });
+      return;
+    }
+
+    const traccarId = sanitize(dispositivo.codigo);
+    if (!traccarId) {
+      setDeleteFeedback({
+        type: 'error',
+        message: 'El dispositivo no tiene un identificador valido en Traccar.',
+      });
+      return;
+    }
+
+    const confirmMessage = `¿Deseas eliminar el dispositivo ${dispositivo.modelo || dispositivo.codigo || ''}? Esta accion no se puede deshacer.`;
+    if (typeof window !== 'undefined' && !window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setDeletingId(dispositivo.id);
+    setDeleteFeedback(null);
+
+    try {
+      const traccarResponse = await traccarFetch(`/api/devices/${encodeURIComponent(traccarId)}`, {
+        method: 'DELETE',
+      });
+
+      if (!traccarResponse.ok) {
+        const text = await traccarResponse.text();
+        throw new Error(text || `No se pudo eliminar el dispositivo en Traccar (${traccarResponse.status}).`);
+      }
+
+      const backendResponse = await authorizedFetch(`/api/v1/dispositivosGps/delete/${encodeURIComponent(dispositivo.id)}`, {
+        method: 'DELETE',
+      });
+      const backendJson = (await backendResponse.json().catch(() => null)) as ApiResponse<null> | null;
+      if (!backendResponse.ok) {
+        const text = backendJson?.message ?? '';
+        throw new Error(text || `No se pudo eliminar el dispositivo (${backendResponse.status}).`);
+      }
+      if (backendJson?.code && backendJson.code !== 200) {
+        throw new Error(backendJson.message || 'No se pudo eliminar el dispositivo.');
+      }
+
+      setDeleteFeedback({
+        type: 'success',
+        message: backendJson?.message ?? 'Dispositivo GPS eliminado correctamente.',
+      });
+      setReloadKey((prev) => prev + 1);
+      setSelectedDispositivo((prev) => (prev && prev.id === dispositivo.id ? null : prev));
+    } catch (error) {
+      console.error('Error al eliminar el dispositivo', error);
+      setDeleteFeedback({
+        type: 'error',
+        message:
+          error instanceof Error
+            ? error.message || 'Hubo un problema al eliminar el dispositivo. Intenta nuevamente.'
+            : 'Hubo un problema al eliminar el dispositivo. Intenta nuevamente.',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const dispositivosEnTabla = useMemo(() => dispositivos, [dispositivos]);
   const startIndex = dispositivosEnTabla.length ? page * size + 1 : 0;
   const endIndex = dispositivosEnTabla.length ? startIndex + dispositivosEnTabla.length - 1 : 0;
@@ -459,10 +534,12 @@ const Dispositivos: React.FC = () => {
                           <button title="Ver" className="hover:text-primary" onClick={() => toggleDetalle(dispositivo)}>
                             <Icon icon="solar:eye-linear" width={20} />
                           </button>
-                          <button title="Editar" className="hover:text-primary" disabled>
-                            <Icon icon="solar:pen-linear" width={20} />
-                          </button>
-                          <button title="Eliminar" className="hover:text-error" disabled>
+                          <button
+                            title="Eliminar"
+                            className={`hover:text-error ${deletingId === dispositivo.id ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            onClick={() => handleEliminarDispositivo(dispositivo)}
+                            disabled={deletingId === dispositivo.id}
+                          >
                             <Icon icon="solar:trash-bin-minimalistic-linear" width={20} />
                           </button>
                         </div>
@@ -474,6 +551,15 @@ const Dispositivos: React.FC = () => {
             </TableBody>
           </Table>
         </div>
+        {deleteFeedback && (
+          <p
+            className={`mt-3 text-sm ${
+              deleteFeedback.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+            }`}
+          >
+            {deleteFeedback.message}
+          </p>
+        )}
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-dark/70">{resumen || (!loading && !error ? 'No hay dispositivos para mostrar.' : '')}</div>
           <div className="flex items-center gap-2 text-sm">

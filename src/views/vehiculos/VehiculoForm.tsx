@@ -44,6 +44,22 @@ const buildDispositivoLabel = (item: DispositivoApi): string => {
   return label || 'Sin codigo';
 };
 
+const getTodayAsInputValue = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const filterOnlyDigits = (value: string, maxLength?: number): string => {
+  const digits = value.replace(/\D/g, '');
+  if (typeof maxLength === 'number') {
+    return digits.slice(0, maxLength);
+  }
+  return digits;
+};
+
 const VehiculoForm: React.FC = () => {
   const navigate = useNavigate();
   const { token, authorizedFetch } = useAuthorizedApi();
@@ -157,6 +173,11 @@ const VehiculoForm: React.FC = () => {
       return;
     }
 
+    if (anio && anio.length !== 4) {
+      setSubmitError('El anio del vehiculo debe tener 4 digitos.');
+      return;
+    }
+
     const parsedAnio = anio.trim() ? Number(anio.trim()) : null;
     if (parsedAnio !== null && (Number.isNaN(parsedAnio) || parsedAnio < 1900)) {
       setSubmitError('El anio del vehiculo no es valido.');
@@ -166,6 +187,11 @@ const VehiculoForm: React.FC = () => {
     const parsedCapacidad = capacidadKg.trim() ? Number(capacidadKg.trim()) : null;
     if (parsedCapacidad !== null && (Number.isNaN(parsedCapacidad) || parsedCapacidad < 0)) {
       setSubmitError('La capacidad del vehiculo debe ser un numero valido.');
+      return;
+    }
+
+    if (fechaMantenimiento && fechaMantenimiento < minFechaMantenimiento) {
+      setSubmitError('Selecciona una fecha de mantenimiento futura.');
       return;
     }
 
@@ -213,6 +239,22 @@ const VehiculoForm: React.FC = () => {
   const handleCancelar = () => navigate('/menu/vehiculos');
 
   const dispositivosOptions = useMemo(() => dispositivos, [dispositivos]);
+  const minFechaMantenimiento = useMemo(() => getTodayAsInputValue(), []);
+
+  const handleMarcaChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const cleaned = event.target.value.replace(/\d+/g, '');
+    setMarca(cleaned);
+  };
+
+  const handleAnioChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = filterOnlyDigits(event.target.value, 4);
+    setAnio(digits);
+  };
+
+  const handleCapacidadChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = filterOnlyDigits(event.target.value);
+    setCapacidadKg(digits);
+  };
 
   return (
     <form onSubmit={handleGuardar}>
@@ -237,7 +279,7 @@ const VehiculoForm: React.FC = () => {
               </div>
               <div>
                 <Label className="mb-2 block">Marca</Label>
-                <TextInput value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="ej. Toyota" className="form-control form-rounded-xl" required />
+                <TextInput value={marca} onChange={handleMarcaChange} placeholder="ej. Toyota" className="form-control form-rounded-xl" required />
               </div>
               <div>
                 <Label className="mb-2 block">Modelo</Label>
@@ -245,11 +287,24 @@ const VehiculoForm: React.FC = () => {
               </div>
               <div>
                 <Label className="mb-2 block">Anio</Label>
-                <TextInput value={anio} onChange={(e) => setAnio(e.target.value)} placeholder="ej. 2021" className="form-control form-rounded-xl" />
+                <TextInput
+                  value={anio}
+                  onChange={handleAnioChange}
+                  placeholder="ej. 2021"
+                  className="form-control form-rounded-xl"
+                  inputMode="numeric"
+                  maxLength={4}
+                />
               </div>
               <div>
                 <Label className="mb-2 block">Capacidad del vehiculo (Kg)</Label>
-                <TextInput value={capacidadKg} onChange={(e) => setCapacidadKg(e.target.value)} placeholder="1500" className="form-control form-rounded-xl" />
+                <TextInput
+                  value={capacidadKg}
+                  onChange={handleCapacidadChange}
+                  placeholder="1500"
+                  className="form-control form-rounded-xl"
+                  inputMode="numeric"
+                />
               </div>
               <div>
                 <Label className="mb-2 block">Estado del vehiculo</Label>
@@ -260,7 +315,13 @@ const VehiculoForm: React.FC = () => {
               </div>
               <div>
                 <Label className="mb-2 block">Fecha de mantenimiento</Label>
-                <TextInput type="date" value={fechaMantenimiento} onChange={(e) => setFechaMantenimiento(e.target.value)} className="form-control form-rounded-xl" />
+                <TextInput
+                  type="date"
+                  value={fechaMantenimiento}
+                  onChange={(e) => setFechaMantenimiento(e.target.value)}
+                  className="form-control form-rounded-xl"
+                  min={minFechaMantenimiento}
+                />
               </div>
             </div>
           </div>

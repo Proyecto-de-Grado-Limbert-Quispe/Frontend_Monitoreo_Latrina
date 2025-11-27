@@ -209,7 +209,17 @@ const EntregaDetalle: React.FC = () => {
 
     if (row.estadoObservacion === 2) {
       navigate(`/menu/entregas/${salidaProgramadaId}/observacion/${detalleId}`, {
-        state: { notaId: String(detalleId) },
+        state: {
+          notaId: String(detalleId),
+          producto: {
+            codigo: row.codigo,
+            nombre: row.nombre,
+            cantidad: row.cantidad,
+            precioUnitario: row.precioUnitario,
+            descripcion: row.descripcion,
+            orden: row.orden,
+          },
+        },
       });
       return;
     }

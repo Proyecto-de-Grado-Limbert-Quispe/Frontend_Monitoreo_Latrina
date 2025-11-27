@@ -19,12 +19,7 @@ const NavItems: React.FC<NavItemsProps> = ({ item }) => {
       event.preventDefault();
       clearAuth();
       if (typeof window !== 'undefined') {
-        try {
-          window.open('', '_self', '');
-        } catch (error) {
-          console.warn('No se pudo abrir una ventana en blanco antes de cerrar', error);
-        }
-        alert('La sesión ha sido cerrada correctamente. Puedes cerrar esta pestaña.');
+        alert('La sesion ha sido cerrada correctamente. Puedes cerrar esta pestana.');
         if (typeof window.close === 'function') {
           window.close();
         }
@@ -51,9 +46,9 @@ const NavItems: React.FC<NavItemsProps> = ({ item }) => {
           } `}
         >
           <div className="flex items-center justify-between">
-            <span className="flex gap-3 align-center items-center">
+            <span className="flex gap-3 items-start min-w-0">
               {item.icon ? (
-                <Icon icon={item.icon} className={`${item.color}`} height={22} />
+                <Icon icon={item.icon} className={`${item.color} mt-0.5`} height={22} />
               ) : (
                 <span
                   className={`ms-2 me-3 ${
@@ -63,7 +58,9 @@ const NavItems: React.FC<NavItemsProps> = ({ item }) => {
                   } `}
                 ></span>
               )}
-              <span className={`max-w-32 text-ellipsis overflow-x-hidden`}>{item.name}</span>
+              <span className="flex-1 min-w-0 text-sm leading-tight break-words whitespace-normal text-left">
+                {item.name}
+              </span>
             </span>
             {item.isPro ? (
               <span className="py-1 px-2 text-[10px] bg-secondary/20 text-secondary rounded-full">

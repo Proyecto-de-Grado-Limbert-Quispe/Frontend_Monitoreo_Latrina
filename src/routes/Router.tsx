@@ -1,8 +1,9 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import  { lazy } from 'react';
+import  { lazy, type ReactElement } from 'react';
 import { Navigate, createBrowserRouter } from "react-router";
 import Loadable from 'src/layouts/full/shared/loadable/Loadable';
+import RoleProtectedRoute from './RoleProtectedRoute';
 
 
 
@@ -55,6 +56,10 @@ const Register = Loadable(lazy(() => import('../views/auth/register/Register')))
 const SamplePage = Loadable(lazy(() => import('../views/sample-page/SamplePage')));
 const Error = Loadable(lazy(() => import('../views/auth/error/Error')));
 
+const withRoleGuard = (element: ReactElement, roles: Array<'administrador' | 'conductor'>) => (
+  <RoleProtectedRoute allowedRoles={roles}>{element}</RoleProtectedRoute>
+);
+
 const Router = [
   // Primero: rutas sin menú (pantalla de bienvenida y auth)
   {
@@ -80,21 +85,45 @@ const Router = [
       { path: '/ui/alert', exact: true, element: <Alert/> },
       { path: '/ui/buttons', exact: true, element: <Buttons/> },
       { path: '/icons/solar', exact: true, element: <Solar /> },
-      { path: '/menu/vehiculos', exact: true, element: <Vehiculos /> },
-      { path: '/menu/vehiculos/nuevo', exact: true, element: <VehiculoForm /> },
-      { path: '/menu/dispositivos', exact: true, element: <Dispositivos /> },
-      { path: '/menu/conductores', exact: true, element: <Conductores /> },
-      { path: '/menu/entregas', exact: true, element: <Entregas /> },
-      { path: '/menu/entregas/:id/salidas', exact: true, element: <ProgramacionSalidas /> },
-      { path: '/menu/entregas/:id', exact: true, element: <EntregaDetalle /> },
-      { path: '/menu/entregas/:id/observacion/:productoId', exact: true, element: <EntregaObservacion /> },
-      { path: '/menu/programar-salida', exact: true, element: <ProgramarSalida /> },
-      { path: '/menu/panel-monitoreo', exact: true, element: <PanelMonitoreo /> },
-      { path: '/menu/panel-monitoreo/salidas/:id', exact: true, element: <SalidaDetalle /> },
-      { path: '/menu/panel-monitoreo/salidas/:id/recorrido', exact: true, element: <RecorridoMapa /> },
-      { path: '/menu/panel-monitoreo/salidas/:id/detalle/:notaId', exact: true, element: <NotaSalidaDetalle /> },
+      { path: '/menu/vehiculos', exact: true, element: withRoleGuard(<Vehiculos />, ['administrador']) },
+      { path: '/menu/vehiculos/nuevo', exact: true, element: withRoleGuard(<VehiculoForm />, ['administrador']) },
+      { path: '/menu/dispositivos', exact: true, element: withRoleGuard(<Dispositivos />, ['administrador']) },
+      { path: '/menu/conductores', exact: true, element: withRoleGuard(<Conductores />, ['administrador']) },
+      {
+        path: '/menu/entregas',
+        exact: true,
+        element: withRoleGuard(<Entregas />, ['administrador', 'conductor']),
+      },
+      {
+        path: '/menu/entregas/:id/salidas',
+        exact: true,
+        element: withRoleGuard(<ProgramacionSalidas />, ['administrador', 'conductor']),
+      },
+      {
+        path: '/menu/entregas/:id',
+        exact: true,
+        element: withRoleGuard(<EntregaDetalle />, ['administrador', 'conductor']),
+      },
+      {
+        path: '/menu/entregas/:id/observacion/:productoId',
+        exact: true,
+        element: withRoleGuard(<EntregaObservacion />, ['administrador', 'conductor']),
+      },
+      { path: '/menu/programar-salida', exact: true, element: withRoleGuard(<ProgramarSalida />, ['administrador']) },
+      { path: '/menu/panel-monitoreo', exact: true, element: withRoleGuard(<PanelMonitoreo />, ['administrador']) },
+      { path: '/menu/panel-monitoreo/salidas/:id', exact: true, element: withRoleGuard(<SalidaDetalle />, ['administrador']) },
+      {
+        path: '/menu/panel-monitoreo/salidas/:id/recorrido',
+        exact: true,
+        element: withRoleGuard(<RecorridoMapa />, ['administrador']),
+      },
+      {
+        path: '/menu/panel-monitoreo/salidas/:id/detalle/:notaId',
+        exact: true,
+        element: withRoleGuard(<NotaSalidaDetalle />, ['administrador']),
+      },
       { path: '/menu/perfil', exact: true, element: <Perfil /> },
-      { path: '/menu/reportes', exact: true, element: <Reportes /> },
+      { path: '/menu/reportes', exact: true, element: withRoleGuard(<Reportes />, ['administrador']) },
       { path: '/sample-page', exact: true, element: <SamplePage /> },
       { path: '*', element: <Navigate to="/auth/404" /> },
     ],
