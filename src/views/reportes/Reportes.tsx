@@ -16,6 +16,10 @@ type ProgramacionApi = {
     idUsuario?: number | string;
     nombreCompleto?: string | null;
   } | null;
+  conductorAsignado?: {
+    idUsuario?: number | string;
+    nombreCompleto?: string | null;
+  } | null;
 };
 
 type Programacion = {
@@ -115,9 +119,12 @@ const getEstadoFromApi = (value?: number | null): EstadoReporte => {
 const mapProgramacion = (item: ProgramacionApi): Programacion => {
   const idValue = item.idProgramacion ?? `programacion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const fechaEntrega = toDateOnly(item.fechaEntrega ?? null);
+  const conductorRaw = item.conductor ?? item.conductorAsignado ?? null;
   const conductorId =
-    item.conductor && item.conductor.idUsuario !== undefined ? String(item.conductor.idUsuario) : null;
-  const conductorNombre = sanitize(item.conductor?.nombreCompleto) || 'Sin asignar';
+    conductorRaw && conductorRaw.idUsuario !== undefined && conductorRaw.idUsuario !== null
+      ? String(conductorRaw.idUsuario)
+      : null;
+  const conductorNombre = sanitize(conductorRaw?.nombreCompleto) || 'Sin asignar';
   return {
     id: String(idValue),
     estado: getEstadoFromApi(item.estadoEntrega),

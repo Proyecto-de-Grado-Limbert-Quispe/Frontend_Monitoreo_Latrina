@@ -200,7 +200,7 @@ const mapProgramacionEstado = (estado: number | null) => {
     case 2:
       return { label: 'Entregado', badge: 'lightsuccess', cls: 'border-success text-success' };
     case 3:
-      return { label: 'No entregado', badge: 'lightsecondary', cls: 'border-secondary text-secondary' };
+      return { label: 'No entregado', badge: 'lighterror', cls: 'border-error text-error' };
     default:
       return { label: 'Sin estado', badge: 'lightsecondary', cls: 'border-secondary text-secondary' };
   }

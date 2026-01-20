@@ -6,8 +6,8 @@ const resolveApiBaseUrl = (): string => {
   if (env) {
     return env.replace(/\/$/, '');
   }
-  //return 'https://includes-conferences-went-showing.trycloudflare.com';
-  return 'http://localhost:8080';
+  return 'https://handheld-counties-purposes-intl.trycloudflare.com';
+  //return 'http://localhost:8080';
 };
 
 const isAbsoluteUrl = (value: string): boolean => /^(?:https?:)?\/\//i.test(value);
